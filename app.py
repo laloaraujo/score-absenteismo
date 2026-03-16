@@ -310,9 +310,9 @@ pred = model.predict(X)
 scaler_final = MinMaxScaler(feature_range=(0, 100))
 features["score_risco"] = scaler_final.fit_transform(
     pred.reshape(-1, 1)
-).flatten().astype(float).round(3)
+).flatten().astype(float).round(2)
 
-features["score_risco"] = features["score_risco"].round(3)
+features["score_risco"] = features["score_risco"].round(2)
 
 def classificar_risco(score):
     if score >= 70:
