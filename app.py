@@ -2,39 +2,20 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import glob
+import tempfile
+import os
+from datetime import datetime
 from xgboost import XGBRegressor
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import MinMaxScaler
-import plotly.express as px
-import plotly.graph_objects as go
 import warnings
-import os
-
-if "logado" not in st.session_state:
-    st.session_state.logado = False
-
-if not st.session_state.logado:
-    st.title("🔒 Acesso Restrito")
-    usuario = st.text_input("Usuário")
-    senha = st.text_input("Senha", type="password")
-    if st.button("Entrar"):
-        if usuario == "rhli" and senha == "Rhli@2026":
-            st.session_state.logado = True
-            st.rerun()
-        else:
-            st.error("Usuário ou senha incorretos.")
-    st.stop()
-
-if st.sidebar.button("Sair"):
-    st.session_state.logado = False
-    st.rerun()
 
 warnings.filterwarnings("ignore")
 
 # ── Page config ───────────────────────────────────────────────────────────────
 st.set_page_config(
-    page_title="Score de Risco de Absenteísmo",
-    page_icon="⚠️",
+    page_title="Análise ML · Afastamentos",
+    page_icon="⬜",
     layout="wide",
     initial_sidebar_state="expanded"
 )
@@ -42,7 +23,6 @@ st.set_page_config(
 st.markdown("""
 <style>
     .block-container { padding-top: 2rem; }
-    .stTabs [data-baseweb="tab"] { font-size: 0.85rem; font-weight: 600; letter-spacing: 0.04em; }
     div[data-testid="metric-container"] {
         border: 1px solid rgba(128,128,128,0.2);
         border-radius: 8px;
@@ -71,59 +51,27 @@ st.sidebar.markdown("""
 """, unsafe_allow_html=True)
 
 # ── Classificação de risco por capítulo CID-10 ───────────────────────────────
-# Peso de recorrência: quanto maior, maior a tendência de se repetir
-# Baseado em evidências clínicas de cronicidade e reincidência
 GRUPO_CID = {
-    # Capítulo F — Transtornos mentais e comportamentais (alto risco de recorrência)
-    "F": {"grupo": "Mental/Comportamental", "peso": 4.0},
-
-    # Capítulo M — Musculoesquelético (alto risco, especialmente crônico)
-    "M": {"grupo": "Musculoesquelético", "peso": 3.5},
-
-    # Capítulo I — Circulatório (risco moderado-alto, doenças crônicas)
-    "I": {"grupo": "Cardiovascular", "peso": 3.0},
-
-    # Capítulo G — Neurológico (moderado-alto)
-    "G": {"grupo": "Neurológico", "peso": 3.0},
-
-    # Capítulo E — Endócrino/Metabólico (diabetes, obesidade — crônico)
-    "E": {"grupo": "Endócrino/Metabólico", "peso": 2.5},
-
-    # Capítulo N — Geniturinário (moderado)
-    "N": {"grupo": "Geniturinário", "peso": 2.0},
-
-    # Capítulo K — Digestivo (moderado)
-    "K": {"grupo": "Digestivo", "peso": 2.0},
-
-    # Capítulo H — Olhos e ouvidos (moderado)
-    "H": {"grupo": "Olhos/Ouvidos", "peso": 2.0},
-
-    # Capítulo L — Pele (moderado-baixo)
-    "L": {"grupo": "Dermatológico", "peso": 1.5},
-
-    # Capítulo S — Lesões/Traumas (baixo — geralmente pontual)
-    "S": {"grupo": "Trauma/Lesão", "peso": 1.5},
-
-    # Capítulo J — Respiratório (baixo — geralmente agudo)
-    "J": {"grupo": "Respiratório", "peso": 1.5},
-
-    # Capítulo R — Sintomas inespecíficos
+    "F": {"grupo": "Mental/Comportamental",  "peso": 4.0},
+    "M": {"grupo": "Musculoesquelético",     "peso": 3.5},
+    "C": {"grupo": "Neoplasia",              "peso": 3.5},
+    "D": {"grupo": "Neoplasia/Sangue",       "peso": 3.5},
+    "I": {"grupo": "Cardiovascular",         "peso": 3.0},
+    "G": {"grupo": "Neurológico",            "peso": 3.0},
+    "E": {"grupo": "Endócrino/Metabólico",   "peso": 2.5},
+    "N": {"grupo": "Geniturinário",          "peso": 2.0},
+    "K": {"grupo": "Digestivo",              "peso": 2.0},
+    "H": {"grupo": "Olhos/Ouvidos",          "peso": 2.0},
+    "L": {"grupo": "Dermatológico",          "peso": 1.5},
+    "S": {"grupo": "Trauma/Lesão",           "peso": 1.5},
+    "J": {"grupo": "Respiratório",           "peso": 1.5},
     "R": {"grupo": "Sintomas Inespecíficos", "peso": 1.5},
-
-    # Capítulo A/B — Infecciosas (baixo — geralmente agudo)
-    "A": {"grupo": "Infecciosa", "peso": 1.0},
-    "B": {"grupo": "Infecciosa", "peso": 1.0},
-
-    # Capítulo Z — Consultas/exames (baixíssimo risco)
-    "Z": {"grupo": "Preventivo/Exame", "peso": 0.5},
-
-    # Capítulo C/D — Neoplasias (caso especial — afastamentos longos)
-    "C": {"grupo": "Neoplasia", "peso": 3.5},
-    "D": {"grupo": "Neoplasia/Sangue", "peso": 3.5},
+    "A": {"grupo": "Infecciosa",             "peso": 1.0},
+    "B": {"grupo": "Infecciosa",             "peso": 1.0},
+    "Z": {"grupo": "Preventivo/Exame",       "peso": 0.5},
 }
 
 def get_cid_info(cid):
-    """Retorna grupo e peso de risco de recorrência para um CID."""
     if pd.isna(cid) or cid == "":
         return "Não informado", 1.0
     cid = str(cid).strip().upper()
@@ -149,16 +97,13 @@ df["MAT"] = df["MAT"].astype(str).str.zfill(6)
 df["DATA"] = pd.to_datetime(df["DATA"], dayfirst=True, errors="coerce")
 df = df.dropna(subset=["DATA"])
 df = df.sort_values(["MAT", "DATA"])
-
-# Normalizar CID (uppercase, sem espaços)
 df["CID"] = df["CID"].astype(str).str.strip().str.upper()
 
-hoje = pd.Timestamp.today()
-
-# ── Enriquecer com info de CID ────────────────────────────────────────────────
 df[["grupo_cid", "peso_cid"]] = df["CID"].apply(
     lambda c: pd.Series(get_cid_info(c))
 )
+
+hoje = df["DATA"].max()
 
 # ── Métricas principais ───────────────────────────────────────────────────────
 col1, col2, col3 = st.columns(3)
@@ -166,335 +111,295 @@ col1.metric("Total de empregados", df["MAT"].nunique())
 col2.metric("Total de atestados", len(df))
 col3.metric("Dias afastados", int(df["DIAS"].sum()))
 
+# ── Janela temporal ───────────────────────────────────────────────────────────
+JANELA_IDEAL = 90
+span_dias = (hoje - df["DATA"].min()).days
+
+if span_dias < JANELA_IDEAL * 2:
+    JANELA_DIAS = max(7, int(span_dias * 0.35))
+    st.warning(
+        f"⚠️ O histórico total abrange apenas **{span_dias} dias**. "
+        f"Para previsões em 90 dias é recomendável ao menos 180 dias de dados. "
+        f"A janela de previsão foi ajustada automaticamente para **{JANELA_DIAS} dias**."
+    )
+else:
+    JANELA_DIAS = JANELA_IDEAL
+
+data_corte = hoje - pd.Timedelta(days=JANELA_DIAS)
+historico  = df[df["DATA"] < data_corte].copy()
+futuro     = df[(df["DATA"] >= data_corte) & (df["DATA"] <= hoje)].copy()
+
+if historico.empty:
+    st.error("❌ Não há dados históricos suficientes para treinar o modelo.")
+    st.stop()
+
 # ── Feature Engineering ───────────────────────────────────────────────────────
+def build_features(source: pd.DataFrame, ref_date: pd.Timestamp) -> pd.DataFrame:
+    freq     = source.groupby("MAT").size().reset_index(name="total_atestados")
+    dias     = source.groupby("MAT")["DIAS"].sum().reset_index(name="dias_afastados")
+    ultimo   = source.groupby("MAT")["DATA"].max().reset_index(name="data_ultimo")
+    primeiro = source.groupby("MAT")["DATA"].min().reset_index(name="data_primeiro")
 
-# Totais históricos
-freq       = df.groupby("MAT").size().reset_index(name="total_atestados")
-dias       = df.groupby("MAT")["DIAS"].sum().reset_index(name="dias_afastados")
-ultimo     = df.groupby("MAT")["DATA"].max().reset_index(name="data_ultimo")
-primeiro   = df.groupby("MAT")["DATA"].min().reset_index(name="data_primeiro")
+    ultimos_6m = source[source["DATA"] >= ref_date - pd.DateOffset(months=6)]
+    ultimos_3m = source[source["DATA"] >= ref_date - pd.DateOffset(months=3)]
 
-# Recortes temporais
-ultimos_6m = df[df["DATA"] >= hoje - pd.DateOffset(months=6)]
-ultimos_3m = df[df["DATA"] >= hoje - pd.DateOffset(months=3)]
-freq_6m    = ultimos_6m.groupby("MAT").size().reset_index(name="atestados_6m")
-freq_3m    = ultimos_3m.groupby("MAT").size().reset_index(name="atestados_3m")
-dias_6m    = ultimos_6m.groupby("MAT")["DIAS"].sum().reset_index(name="dias_afastados_6m")
+    freq_6m = ultimos_6m.groupby("MAT").size().reset_index(name="atestados_6m")
+    freq_3m = ultimos_3m.groupby("MAT").size().reset_index(name="atestados_3m")
+    dias_6m = ultimos_6m.groupby("MAT")["DIAS"].sum().reset_index(name="dias_afastados_6m")
 
-# ── Features de CID ───────────────────────────────────────────────────────────
-# Peso máximo de CID por funcionário (pior diagnóstico registrado)
-peso_max_cid = df.groupby("MAT")["peso_cid"].max().reset_index(name="peso_cid_max")
+    peso_max_cid = source.groupby("MAT")["peso_cid"].max().reset_index(name="peso_cid_max")
 
-# Peso médio ponderado pelos dias (diagnósticos que geraram mais dias pesam mais)
-df["peso_x_dias"] = df["peso_cid"] * df["DIAS"]
-peso_pond = (
-    df.groupby("MAT")
-    .apply(lambda g: g["peso_x_dias"].sum() / g["DIAS"].sum() if g["DIAS"].sum() > 0 else 1.0)
-    .reset_index(name="peso_cid_ponderado")
+    source = source.copy()
+    source["peso_x_dias"] = source["peso_cid"] * source["DIAS"]
+    peso_pond = (
+        source.groupby("MAT")
+        .apply(lambda g: g["peso_x_dias"].sum() / g["DIAS"].sum() if g["DIAS"].sum() > 0 else 1.0)
+        .reset_index()
+        .rename(columns={0: "peso_cid_ponderado"})
+    )
+
+    diversidade_cid = source.groupby("MAT")["grupo_cid"].nunique().reset_index(name="diversidade_cid")
+
+    source["cid_cronico"] = (source["peso_cid"] >= 3.0).astype(int)
+    tem_cronico = source.groupby("MAT")["cid_cronico"].max().reset_index(name="tem_cid_cronico")
+
+    feat = freq.merge(dias,           on="MAT")
+    feat = feat.merge(ultimo,         on="MAT")
+    feat = feat.merge(primeiro,       on="MAT")
+    feat = feat.merge(freq_6m,        on="MAT", how="left")
+    feat = feat.merge(freq_3m,        on="MAT", how="left")
+    feat = feat.merge(dias_6m,        on="MAT", how="left")
+    feat = feat.merge(peso_max_cid,   on="MAT", how="left")
+    feat = feat.merge(peso_pond,      on="MAT", how="left")
+    feat = feat.merge(diversidade_cid,on="MAT", how="left")
+    feat = feat.merge(tem_cronico,    on="MAT", how="left")
+    feat = feat.fillna(0)
+
+    feat["dias_desde_ultimo"]   = (ref_date - feat["data_ultimo"]).dt.days
+    feat["meses_historico"]     = ((feat["data_ultimo"] - feat["data_primeiro"]).dt.days / 30).clip(lower=1)
+    feat["freq_mensal"]         = feat["total_atestados"] / feat["meses_historico"]
+    feat["media_dias_atestado"] = feat["dias_afastados"]  / feat["total_atestados"]
+    feat["tendencia_recente"]   = feat["atestados_6m"] / (feat["total_atestados"] + 1)
+    feat["score_recencia"]      = 1 / (feat["dias_desde_ultimo"] + 1)
+
+    return feat
+
+features = build_features(historico, data_corte)
+
+target_real = (
+    futuro.groupby("MAT")
+    .agg(atestados_futuros=("MAT", "count"), dias_futuros=("DIAS", "sum"))
+    .reset_index()
 )
 
-# Diversidade de grupos CID (muitos grupos diferentes = problema sistêmico)
-diversidade_cid = (
-    df.groupby("MAT")["grupo_cid"]
-    .nunique()
-    .reset_index(name="diversidade_cid")
-)
+features = features.merge(target_real, on="MAT", how="left")
+features["atestados_futuros"] = features["atestados_futuros"].fillna(0)
+features["dias_futuros"]      = features["dias_futuros"].fillna(0)
 
-# CID crônico: tem algum diagnóstico com peso >= 3.0?
-df["cid_cronico"] = (df["peso_cid"] >= 3.0).astype(int)
-tem_cronico = df.groupby("MAT")["cid_cronico"].max().reset_index(name="tem_cid_cronico")
-
-# ── Montar base de features ───────────────────────────────────────────────────
-features = freq.merge(dias, on="MAT")
-features = features.merge(ultimo, on="MAT")
-features = features.merge(primeiro, on="MAT")
-features = features.merge(freq_6m, on="MAT", how="left")
-features = features.merge(freq_3m, on="MAT", how="left")
-features = features.merge(dias_6m, on="MAT", how="left")
-features = features.merge(peso_max_cid, on="MAT", how="left")
-features = features.merge(peso_pond, on="MAT", how="left")
-features = features.merge(diversidade_cid, on="MAT", how="left")
-features = features.merge(tem_cronico, on="MAT", how="left")
-features = features.fillna(0)
-
-# Features derivadas
-features["dias_desde_ultimo"] = (hoje - features["data_ultimo"]).dt.days
-
-features["meses_historico"] = (
-    (features["data_ultimo"] - features["data_primeiro"]).dt.days / 30
-).clip(lower=1)
-
-features["freq_mensal"] = features["total_atestados"] / features["meses_historico"]
-
-features["media_dias_atestado"] = (
-    features["dias_afastados"] / features["total_atestados"]
-)
-
-features["tendencia_recente"] = (
-    features["atestados_6m"] / (features["total_atestados"] + 1)
-)
-
-features["score_recencia"] = 1 / (features["dias_desde_ultimo"] + 1)
-
-# ── Target ponderado com CID ──────────────────────────────────────────────────
-scaler_tmp = MinMaxScaler()
-
-componentes = pd.DataFrame({
-    "c1": features["total_atestados"],
-    "c2": features["dias_afastados"],
-    "c3": features["atestados_6m"],
-    "c4": features["freq_mensal"],
-    "c5": features["tendencia_recente"],
-    "c6": features["score_recencia"],
-    "c7": features["peso_cid_max"],          # pior diagnóstico
-    "c8": features["peso_cid_ponderado"],    # diagnósticos ponderados por dias
-    "c9": features["diversidade_cid"],       # variedade de problemas
-    "c10": features["tem_cid_cronico"],      # tem doença crônica?
-})
-
-componentes_norm = pd.DataFrame(
-    scaler_tmp.fit_transform(componentes),
-    columns=componentes.columns
-)
-
-# Pesos revisados — CID representa 30% do score total
-features["target"] = (
-    componentes_norm["c1"]  * 0.18 +   # total de atestados
-    componentes_norm["c2"]  * 0.15 +   # dias afastados
-    componentes_norm["c3"]  * 0.15 +   # atestados últimos 6m
-    componentes_norm["c4"]  * 0.10 +   # frequência mensal
-    componentes_norm["c5"]  * 0.07 +   # tendência recente
-    componentes_norm["c6"]  * 0.05 +   # recência
-    componentes_norm["c7"]  * 0.10 +   # peso CID máximo
-    componentes_norm["c8"]  * 0.10 +   # peso CID ponderado por dias
-    componentes_norm["c9"]  * 0.05 +   # diversidade de grupos
-    componentes_norm["c10"] * 0.05     # presença de CID crônico
-) * 100
-
-# ── Treino do modelo ──────────────────────────────────────────────────────────
 feature_cols = [
-    "dias_desde_ultimo",
-    "total_atestados",
-    "dias_afastados",
-    "atestados_6m",
-    "atestados_3m",
-    "dias_afastados_6m",
-    "freq_mensal",
-    "media_dias_atestado",
-    "tendencia_recente",
-    "score_recencia",
-    "peso_cid_max",
-    "peso_cid_ponderado",
-    "diversidade_cid",
-    "tem_cid_cronico",
+    "dias_desde_ultimo", "total_atestados", "dias_afastados",
+    "atestados_6m", "atestados_3m", "dias_afastados_6m",
+    "freq_mensal", "media_dias_atestado", "tendencia_recente",
+    "score_recencia", "peso_cid_max", "peso_cid_ponderado",
+    "diversidade_cid", "tem_cid_cronico",
 ]
 
 X = features[feature_cols]
-y = features["target"]
+y = features["atestados_futuros"]
 
-X_train, X_test, y_train, y_test = train_test_split(
-    X, y, test_size=0.2, random_state=42
-)
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
 
 model = XGBRegressor(
-    n_estimators=300,
-    max_depth=4,
-    learning_rate=0.03,
-    subsample=0.8,
-    colsample_bytree=0.8,
-    random_state=42,
+    n_estimators=300, max_depth=4, learning_rate=0.03,
+    subsample=0.8, colsample_bytree=0.8, random_state=42,
 )
 model.fit(X_train, y_train)
 
-pred = model.predict(X)
-scaler_final = MinMaxScaler(feature_range=(0, 100))
-features["score_risco"] = scaler_final.fit_transform(
-    pred.reshape(-1, 1)
-).flatten().astype(float).round(2)
+pred_raw = model.predict(X)
 
-features["score_risco"] = features["score_risco"].round(2)
+scaler_final = MinMaxScaler(feature_range=(0, 100))
+features["score_risco"] = (
+    scaler_final.fit_transform(pred_raw.reshape(-1, 1)).flatten().round(1)
+)
+features["atestados_previstos"] = pred_raw.clip(min=0).round(1)
 
 def classificar_risco(score):
-    if score >= 70:
-        return "🔴 Alto"
-    elif score >= 40:
-        return "🟡 Médio"
-    else:
-        return "🟢 Baixo"
+    if score >= 70:   return "🔴 Alto"
+    elif score >= 40: return "🟡 Médio"
+    else:             return "🟢 Baixo"
 
 features["nivel_risco"] = features["score_risco"].apply(classificar_risco)
 
-# ── Enriquecer resultado com grupo CID predominante ───────────────────────────
 grupo_predominante = (
-    df.groupby("MAT")
+    historico.groupby("MAT")
     .apply(lambda g: g.loc[g["peso_cid"].idxmax(), "grupo_cid"])
     .reset_index(name="grupo_cid_principal")
 )
 features = features.merge(grupo_predominante, on="MAT", how="left")
 
-# ── Tabs ──────────────────────────────────────────────────────────────────────
-tab1, tab2, tab3 = st.tabs(["Ranking de Risco", "Análise por CID", "Importância das Features"])
+# ── Montar ranking final ───────────────────────────────────────────────────────
+ranking = features[[
+    "MAT", "score_risco", "nivel_risco", "atestados_previstos",
+    "grupo_cid_principal", "total_atestados", "dias_afastados",
+    "atestados_6m", "dias_desde_ultimo", "peso_cid_max",
+]].copy()
 
-# ─────────────────────────────────────────────────────────────────────────────
-with tab1:
-    st.subheader("Ranking de Absenteísmo")
+ranking = ranking.sort_values("score_risco", ascending=False).reset_index(drop=True)
+ranking.index = ranking.index + 1
+ranking.index.name = "Posição"
 
-    resultado = features[[
-        "MAT",
-        "score_risco",
-        "nivel_risco",
-        "grupo_cid_principal",
-        "total_atestados",
-        "dias_afastados",
-        "atestados_6m",
-        "dias_desde_ultimo",
-        "peso_cid_max",
-    ]].copy()
+ranking = ranking.rename(columns={
+    "MAT":                 "Empregado",
+    "score_risco":         "Score",
+    "nivel_risco":         "Nível de risco",
+    "atestados_previstos": "Previstos (90d)",
+    "grupo_cid_principal": "Grupo CID",
+    "total_atestados":     "Total atestados",
+    "dias_afastados":      "Dias afastados",
+    "atestados_6m":        "Atestados (6m)",
+    "dias_desde_ultimo":   "Dias s/ atestado",
+    "peso_cid_max":        "Peso CID",
+})
 
-    ranking = resultado.sort_values("score_risco", ascending=False).reset_index(drop=True)
-    ranking.index = ranking.index + 1
-    ranking.index.name = "posição"
+# ── Exibição ──────────────────────────────────────────────────────────────────
+st.subheader("Ranking de Absenteísmo — Previsão para os próximos 90 dias")
 
-    ranking = ranking.rename(columns={
-        "MAT": "Empregado",
-        "score_risco": "Score de risco",
-        "nivel_risco": "Nível de risco",
-        "grupo_cid_principal": "Grupo CID principal",
-        "total_atestados": "Total atestados",
-        "dias_afastados": "Dias afastados",
-        "atestados_6m": "Atestados (6m)",
-        "dias_desde_ultimo": "Dias desde último",
-        "peso_cid_max": "Peso CID",
-    })
-
-    st.dataframe(
-        ranking.style
-            .background_gradient(subset=["Score de risco"], cmap="RdYlGn_r")
-            .format({"Score de risco": "{:.2f}"}),  # ← adicione esta linha
-        use_container_width=True,
-        height=min((len(ranking) + 1) * 35 + 3, 600)
+st.info(
+    f"🔬 **Metodologia:** features construídas com dados anteriores a "
+    f"**{data_corte.strftime('%d/%m/%Y')}**. O modelo XGBoost prevê quantos "
+    f"atestados cada empregado terá nos próximos **{JANELA_DIAS} dias**. "
+    f"O score (0–100) é derivado diretamente dessa previsão."
 )
 
-    col1, col2, col3 = st.columns(3)
-    alto  = (features["nivel_risco"] == "🔴 Alto").sum()
-    medio = (features["nivel_risco"] == "🟡 Médio").sum()
-    baixo = (features["nivel_risco"] == "🟢 Baixo").sum()
-    col1.metric("🔴 Alto risco", alto)
-    col2.metric("🟡 Médio risco", medio)
-    col3.metric("🟢 Baixo risco", baixo)
+col1, col2, col3 = st.columns(3)
+col1.metric("🔴 Alto risco",  (features["nivel_risco"] == "🔴 Alto").sum())
+col2.metric("🟡 Médio risco", (features["nivel_risco"] == "🟡 Médio").sum())
+col3.metric("🟢 Baixo risco", (features["nivel_risco"] == "🟢 Baixo").sum())
 
-# ─────────────────────────────────────────────────────────────────────────────
-with tab2:
-    st.subheader("Distribuição por Grupo CID")
+st.divider()
 
-    # Frequência de atestados por grupo CID
-    grupo_freq = (
-        df.groupby("grupo_cid")
-        .agg(
-            atestados=("MAT", "count"),
-            dias_totais=("DIAS", "sum"),
-            funcionarios=("MAT", "nunique"),
-        )
-        .reset_index()
-        .sort_values("atestados", ascending=False)
-    )
+# Tabela sem scroll: altura calculada para mostrar todas as linhas
+altura_tabela = (len(ranking) + 1) * 35 + 10
 
-    col1, col2 = st.columns(2)
+st.dataframe(
+    ranking.style
+        .background_gradient(subset=["Score"], cmap="RdYlGn_r")
+        .format({"Score": "{:.1f}", "Previstos (90d)": "{:.1f}"}),
+    use_container_width=True,
+    height=altura_tabela,
+)
 
-    with col1:
-        fig1 = px.bar(
-            grupo_freq,
-            x="atestados",
-            y="grupo_cid",
-            orientation="h",
-            title="Atestados por grupo CID",
-            color="atestados",
-            color_continuous_scale="Reds",
-            labels={"grupo_cid": "Grupo", "atestados": "Nº de atestados"},
-        )
-        fig1.update_layout(showlegend=False, coloraxis_showscale=False)
-        st.plotly_chart(fig1, use_container_width=True)
+# ── Exportar PDF ──────────────────────────────────────────────────────────────
+st.divider()
 
-    with col2:
-        fig2 = px.bar(
-            grupo_freq,
-            x="dias_totais",
-            y="grupo_cid",
-            orientation="h",
-            title="Dias afastados por grupo CID",
-            color="dias_totais",
-            color_continuous_scale="Oranges",
-            labels={"grupo_cid": "Grupo", "dias_totais": "Total de dias"},
-        )
-        fig2.update_layout(showlegend=False, coloraxis_showscale=False)
-        st.plotly_chart(fig2, use_container_width=True)
+def gerar_pdf(df_ranking: pd.DataFrame) -> bytes | None:
+    try:
+        from weasyprint import HTML
+    except ImportError:
+        return None
 
-    st.subheader("Peso de risco de recorrência por grupo CID")
-    st.markdown("""
-    O peso de recorrência reflete a tendência clínica de cada grupo diagnóstico
-    se repetir ou se cronificar. É utilizado como feature no modelo de ranking.
-    """)
+    gerado_em = datetime.now().strftime("%d/%m/%Y %H:%M")
 
-    peso_ref = pd.DataFrame([
-        {"Grupo": v["grupo"], "Peso de recorrência": v["peso"], "Capítulo CID": k}
-        for k, v in GRUPO_CID.items()
-    ]).sort_values("Peso de recorrência", ascending=False)
+    def cor_linha(nivel):
+        if "Alto"  in nivel: return "#fff0f0"
+        if "Médio" in nivel: return "#fffbea"
+        return "#f0fff4"
 
-    fig3 = px.bar(
-        peso_ref,
-        x="Peso de recorrência",
-        y="Grupo",
-        orientation="h",
-        color="Peso de recorrência",
-        color_continuous_scale="RdYlGn_r",
-        title="Peso de recorrência clínica por grupo CID-10",
-        text="Peso de recorrência",
-    )
-    fig3.update_traces(texttemplate="%{text:.1f}", textposition="outside")
-    fig3.update_layout(showlegend=False, coloraxis_showscale=False)
-    st.plotly_chart(fig3, use_container_width=True)
+    def badge(nivel):
+        if "Alto"  in nivel:
+            return '<span style="background:#ef4444;color:#fff;padding:2px 8px;border-radius:4px;font-size:10px;font-weight:700;">Alto</span>'
+        if "Médio" in nivel:
+            return '<span style="background:#f59e0b;color:#fff;padding:2px 8px;border-radius:4px;font-size:10px;font-weight:700;">Médio</span>'
+        return '<span style="background:#22c55e;color:#fff;padding:2px 8px;border-radius:4px;font-size:10px;font-weight:700;">Baixo</span>'
 
-# ─────────────────────────────────────────────────────────────────────────────
-with tab3:
-    st.subheader("Importância das Features (XGBoost)")
+    linhas_html = ""
+    for pos, row in df_ranking.iterrows():
+        bg = cor_linha(row["Nível de risco"])
+        linhas_html += f"""
+        <tr style="background:{bg};">
+            <td style="text-align:center;">{pos}</td>
+            <td style="text-align:center;font-weight:600;">{row['Empregado']}</td>
+            <td style="text-align:center;font-weight:700;">{row['Score']:.1f}</td>
+            <td style="text-align:center;">{badge(row['Nível de risco'])}</td>
+            <td style="text-align:center;">{row['Previstos (90d)']:.1f}</td>
+            <td>{row['Grupo CID']}</td>
+            <td style="text-align:center;">{int(row['Total atestados'])}</td>
+            <td style="text-align:center;">{int(row['Dias afastados'])}</td>
+            <td style="text-align:center;">{int(row['Atestados (6m)'])}</td>
+            <td style="text-align:center;">{int(row['Dias s/ atestado'])}</td>
+            <td style="text-align:center;">{row['Peso CID']:.1f}</td>
+        </tr>"""
 
-    importances = pd.DataFrame({
-        "Feature": feature_cols,
-        "Importância": model.feature_importances_,
-    }).sort_values("Importância", ascending=True)
+    html = f"""<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<style>
+    @page {{ size: A4 landscape; margin: 1.5cm; }}
+    body {{ font-family: Arial, sans-serif; font-size: 10px; color: #1e293b; }}
+    h1 {{ font-size: 15px; color: #1e3a5f; margin-bottom: 2px; }}
+    .sub {{ font-size: 9px; color: #64748b; margin-bottom: 14px; }}
+    table {{ width: 100%; border-collapse: collapse; }}
+    thead tr {{ background: #1e3a5f; color: white; }}
+    th {{ padding: 6px 8px; text-align: center; font-size: 9px; font-weight: 700; letter-spacing: 0.03em; }}
+    td {{ padding: 5px 8px; border-bottom: 1px solid #e2e8f0; font-size: 9px; }}
+    .footer {{ margin-top: 12px; font-size: 8px; color: #94a3b8; text-align: right; }}
+</style>
+</head>
+<body>
+    <h1>Score de Risco de Absenteísmo — Próximos {JANELA_DIAS} dias</h1>
+    <p class="sub">
+        Gerado em {gerado_em} &nbsp;|&nbsp;
+        Base de dados até {hoje.strftime('%d/%m/%Y')} &nbsp;|&nbsp;
+        Modelo: XGBoost &nbsp;|&nbsp;
+        Total de empregados: {len(df_ranking)}
+    </p>
+    <table>
+        <thead>
+            <tr>
+                <th>#</th><th>Empregado</th><th>Score</th><th>Nível</th>
+                <th>Previstos (90d)</th><th>Grupo CID</th>
+                <th>Total atestados</th><th>Dias afastados</th>
+                <th>Atestados (6m)</th><th>Dias s/ atestado</th><th>Peso CID</th>
+            </tr>
+        </thead>
+        <tbody>
+            {linhas_html}
+        </tbody>
+    </table>
+    <p class="footer">Jorge Eduardo de Araujo Oliveira — Análise ML · Afastamentos</p>
+</body>
+</html>"""
 
-    nomes_pt = {
-        "dias_desde_ultimo":     "Dias desde último atestado",
-        "total_atestados":       "Total de atestados",
-        "dias_afastados":        "Total de dias afastados",
-        "atestados_6m":          "Atestados (últimos 6m)",
-        "atestados_3m":          "Atestados (últimos 3m)",
-        "dias_afastados_6m":     "Dias afastados (6m)",
-        "freq_mensal":           "Frequência mensal",
-        "media_dias_atestado":   "Média de dias por atestado",
-        "tendencia_recente":     "Tendência recente",
-        "score_recencia":        "Score de recência",
-        "peso_cid_max":          "Peso CID máximo ★",
-        "peso_cid_ponderado":    "Peso CID ponderado ★",
-        "diversidade_cid":       "Diversidade de grupos CID ★",
-        "tem_cid_cronico":       "Presença de CID crônico ★",
-    }
+    with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as f:
+        HTML(string=html).write_pdf(f.name)
+        pdf_bytes = open(f.name, "rb").read()
+    os.unlink(f.name)
+    return pdf_bytes
 
-    importances["Feature"] = importances["Feature"].map(nomes_pt)
 
-    fig4 = px.bar(
-        importances,
-        x="Importância",
-        y="Feature",
-        orientation="h",
-        color="Importância",
-        color_continuous_scale="Blues",
-        title="Importância de cada feature no modelo XGBoost (★ = features de CID)",
-    )
-    fig4.update_layout(showlegend=False, coloraxis_showscale=False)
-    st.plotly_chart(fig4, use_container_width=True)
+col_btn, col_info = st.columns([1, 5])
+with col_btn:
+    if st.button("📄 Exportar PDF", use_container_width=True):
+        with st.spinner("Gerando PDF..."):
+            pdf_bytes = gerar_pdf(ranking)
 
-    pct_cid = importances[importances["Feature"].str.contains("★")]["Importância"].sum()
-    st.info(
-        f"**Features de CID respondem por {pct_cid*100:.1f}% da importância total do modelo.**"
+        if pdf_bytes is None:
+            st.error(
+                "Biblioteca `weasyprint` não instalada.\n\n"
+                "Execute no terminal: `pip install weasyprint`"
+            )
+        else:
+            nome = f"ranking_absenteismo_{datetime.now().strftime('%Y%m%d_%H%M')}.pdf"
+            st.download_button(
+                label="⬇️ Baixar PDF",
+                data=pdf_bytes,
+                file_name=nome,
+                mime="application/pdf",
+                use_container_width=True,
+            )
+with col_info:
+    st.caption(
+        "PDF gerado em A4 paisagem com todos os empregados, colorido por nível de risco. "
+        "Requer `pip install weasyprint`."
     )
