@@ -14,7 +14,7 @@ from fpdf import FPDF
 warnings.filterwarnings("ignore")
 
 def gerar_pdf(df_ranking):
-    # 'L' para Landscape (Paisagem) - A4 tem 297mm de largura
+    # 'L' para Landscape (Paisagem)
     pdf = FPDF(orientation='L', unit='mm', format='A4')
     pdf.add_page()
     
@@ -28,7 +28,7 @@ def gerar_pdf(df_ranking):
     pdf.set_fill_color(30, 58, 95) # Azul Escuro
     pdf.set_text_color(255, 255, 255) # Texto Branco
     
-    # Nomes das colunas e larguras ajustadas (Total: 275mm)
+    # Ajuste de larguras para comportar 2 casas decimais (Total 275mm)
     cols = ["Pos", "Empregado", "Score", "Risco", "Previstos", "Grupo CID", "Total", "Dias", "6m", "S/ Ates.", "Peso"]
     widths = [10, 25, 20, 25, 25, 50, 20, 20, 20, 30, 15] 
     
@@ -37,42 +37,44 @@ def gerar_pdf(df_ranking):
     pdf.ln()
     
     # Configuração do corpo da tabela
-    pdf.set_font("Arial", "", 9) # Aumentei um pouco a fonte para leitura
+    pdf.set_font("Arial", "", 9)
     pdf.set_text_color(0, 0, 0)
     
     for index, row in df_ranking.iterrows():
-        # 1. Limpeza de Emojis e Texto de Risco
+        # Limpeza de Emojis
         texto_risco = str(row["Nível de risco"]).replace("🔴 ", "").replace("🟡 ", "").replace("🟢 ", "")
         
-        # 2. Definição de cores de fundo por risco
+        # Cores de fundo por risco
         if "Alto" in texto_risco:
-            pdf.set_fill_color(255, 210, 210) # Vermelho suave
+            pdf.set_fill_color(255, 210, 210) 
         elif "Médio" in texto_risco:
-            pdf.set_fill_color(255, 255, 210) # Amarelo suave
+            pdf.set_fill_color(255, 255, 210) 
         else:
-            pdf.set_fill_color(210, 255, 210) # Verde suave
+            pdf.set_fill_color(210, 255, 210)
 
-        # 3. Formatação dos números (O SEGREDO PARA NÃO ESCANGALHAR)
-        score_formatado     = f"{float(row['Score']):.1f}"
-        previsto_formatado  = f"{float(row['Previstos (90d)']):.1f}"
-        peso_formatado      = f"{float(row['Peso CID']):.1f}"
-        total_atestados     = str(int(row['Total atestados']))
-        dias_afastados      = str(int(row['Dias afastados']))
-        atestados_6m        = str(int(row['Atestados (6m)']))
-        dias_sem_atestado   = str(int(row['Dias s/ atestado']))
+        # ── FORMATAÇÃO COM 2 CASAS DECIMAIS ──
+        score_val    = format(float(row['Score']), ".2f")
+        previsto_val = format(float(row['Previstos (90d)']), ".2f")
+        peso_val     = format(float(row['Peso CID']), ".2f")
+        
+        # Valores inteiros permanecem limpos
+        total_atest  = str(int(row['Total atestados']))
+        dias_afast   = str(int(row['Dias afastados']))
+        atest_6m     = str(int(row['Atestados (6m)']))
+        dias_s_atest = str(int(row['Dias s/ atestado']))
 
-        # 4. Renderização das células com valores limpos
+        # Renderização das células
         pdf.cell(widths[0], 8, str(index), border=1, align='C', fill=True)
         pdf.cell(widths[1], 8, str(row["Empregado"]), border=1, align='C', fill=True)
-        pdf.cell(widths[2], 8, score_formatado, border=1, align='C', fill=True)
+        pdf.cell(widths[2], 8, score_val, border=1, align='C', fill=True) # Score com 2 casas
         pdf.cell(widths[3], 8, texto_risco, border=1, align='C', fill=True)
-        pdf.cell(widths[4], 8, previsto_formatado, border=1, align='C', fill=True)
-        pdf.cell(widths[5], 8, str(row["Grupo CID"])[:25], border=1, align='L', fill=True) # Limita texto longo
-        pdf.cell(widths[6], 8, total_atestados, border=1, align='C', fill=True)
-        pdf.cell(widths[7], 8, dias_afastados, border=1, align='C', fill=True)
-        pdf.cell(widths[8], 8, atestados_6m, border=1, align='C', fill=True)
-        pdf.cell(widths[9], 8, dias_sem_atestado, border=1, align='C', fill=True)
-        pdf.cell(widths[10], 8, peso_formatado, border=1, align='C', fill=True)
+        pdf.cell(widths[4], 8, previsto_val, border=1, align='C', fill=True) # Previstos com 2 casas
+        pdf.cell(widths[5], 8, str(row["Grupo CID"])[:25], border=1, align='L', fill=True)
+        pdf.cell(widths[6], 8, total_atest, border=1, align='C', fill=True)
+        pdf.cell(widths[7], 8, dias_afast, border=1, align='C', fill=True)
+        pdf.cell(widths[8], 8, atest_6m, border=1, align='C', fill=True)
+        pdf.cell(widths[9], 8, dias_s_atest, border=1, align='C', fill=True)
+        pdf.cell(widths[10], 8, peso_val, border=1, align='C', fill=True)
         pdf.ln()
         
     return bytes(pdf.output())
