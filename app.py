@@ -8,6 +8,8 @@ from xgboost import XGBRegressor
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import MinMaxScaler
 import warnings
+from datetime import datetime
+
 warnings.filterwarnings("ignore")
 
 # ── Login ─────────────────────────────────────────────────────────────────────
@@ -208,7 +210,7 @@ def build_features(source: pd.DataFrame, ref_date: pd.Timestamp) -> pd.DataFrame
         "tem_cid_cronico": 0,
     })
 
-    feat["dias_desde_ultimo"] = (ref_date - feat["data_ultimo"]).dt.days.fillna((ref_date - df["DATA"].min()).days)
+    feat["dias_desde_ultimo"] = (data_corte - feat["data_ultimo"]).dt.days
     feat["meses_historico"]   = ((feat["data_ultimo"] - feat["data_primeiro"]).dt.days / 30).clip(lower=1).fillna(1)
     feat["freq_mensal"]       = feat["total_atestados"] / feat["meses_historico"]
     feat["media_dias_atestado"] = feat["dias_afastados"] / feat["total_atestados"].replace(0,1)
