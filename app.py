@@ -297,6 +297,21 @@ ranking = ranking.rename(columns={
     "peso_cid_max": "Peso CID",
 })
 
+# --- BOTÃO DE EXPORTAÇÃO ---
+with st.sidebar:
+    st.divider()
+    st.subheader("Exportar Dados")
+    try:
+        pdf_bytes = gerar_pdf(ranking)
+        st.download_button(
+            label="📄 Baixar Ranking em PDF",
+            data=pdf_bytes,
+            file_name=f"ranking_absenteismo_{datetime.now().strftime('%Y%m%d')}.pdf",
+            mime="application/pdf"
+        )
+    except Exception as e:
+        st.error(f"Erro ao gerar PDF: {e}")
+
 # ── Exibição ──────────────────────────────────────────────────────────────────
 st.subheader("Score de Absenteísmo — Previsão para os próximos 90 dias")
 st.info(
