@@ -14,69 +14,66 @@ from fpdf import FPDF
 warnings.filterwarnings("ignore")
 
 def gerar_pdf(df_ranking):
-    # --- ORDENAÇÃO POR MATRÍCULA ---
-    # Criamos uma cópia ordenada para não afetar a visualização principal do Streamlit
+    # Ordenação por matrícula conforme solicitado anteriormente
     df_pdf = df_ranking.sort_values(by="Empregado").copy()
     
-    # 'L' para Landscape (Paisagem)
+    # Orientação Paisagem
     pdf = FPDF(orientation='L', unit='mm', format='A4')
+    pdf.set_auto_page_break(auto=True, margin=15) # Margem de segurança
     pdf.add_page()
     
-    # Título do Relatório
-    pdf.set_font("Arial", "B", 16)
-    pdf.cell(0, 10, "Relatorio de Score de Absenteismo - Ordenado por Matricula", ln=True, align='C')
-    pdf.ln(5)
+    # Título mais compacto
+    pdf.set_font("Arial", "B", 12)
+    pdf.cell(0, 8, "Relatorio de Score de Absenteismo - Ordenado por Matricula", ln=True, align='C')
+    pdf.ln(2)
     
-    # Configuração do Cabeçalho
-    pdf.set_font("Arial", "B", 8)
-    pdf.set_fill_color(30, 58, 95) # Azul Escuro
-    pdf.set_text_color(255, 255, 255) # Texto Branco
+    # Cabeçalho com altura reduzida (h=6) e fonte menor
+    pdf.set_font("Arial", "B", 7)
+    pdf.set_fill_color(30, 58, 95) 
+    pdf.set_text_color(255, 255, 255)
     
     cols = ["Pos", "Empregado", "Score", "Risco", "Previstos", "Grupo CID", "Total", "Dias", "6m", "S/ Ates.", "Peso"]
-    widths = [10, 25, 20, 25, 25, 50, 20, 20, 20, 30, 15] 
+    widths = [10, 25, 20, 20, 20, 50, 20, 20, 20, 30, 15] 
     
     for i, col_name in enumerate(cols):
-        pdf.cell(widths[i], 10, col_name, border=1, align='C', fill=True)
+        pdf.cell(widths[i], 6, col_name, border=1, align='C', fill=True)
     pdf.ln()
     
-    # Configuração do corpo da tabela
-    pdf.set_font("Arial", "", 9)
+    # Corpo da tabela com altura de linha reduzida (h=5)
+    pdf.set_font("Arial", "", 7)
     pdf.set_text_color(0, 0, 0)
     
-    # Usamos o df_pdf (ordenado) para preencher as linhas
     for index, row in df_pdf.iterrows():
-        # Limpeza de Emojis
         texto_risco = str(row["Nível de risco"]).replace("🔴 ", "").replace("🟡 ", "").replace("🟢 ", "")
         
-        # Cores de fundo por risco
-        if "Alto" in texto_risco:
-            pdf.set_fill_color(255, 210, 210) 
-        elif "Médio" in texto_risco:
-            pdf.set_fill_color(255, 255, 210) 
-        else:
-            pdf.set_fill_color(210, 255, 210)
+        # Cores suaves
+        if "Alto" in texto_risco: pdf.set_fill_color(255, 230, 230) 
+        elif "Médio" in texto_risco: pdf.set_fill_color(255, 255, 230) 
+        else: pdf.set_fill_color(230, 255, 230)
 
-        # Formatação com 2 casas decimais
+        # Formatação
         score_val    = format(float(row['Score']), ".2f")
         previsto_val = format(float(row['Previstos (90d)']), ".2f")
         peso_val     = format(float(row['Peso CID']), ".2f")
         
-        # Renderização das células (usamos o índice original do ranking como 'Pos')
-        pdf.cell(widths[0], 8, str(index), border=1, align='C', fill=True)
-        pdf.cell(widths[1], 8, str(row["Empregado"]), border=1, align='C', fill=True)
-        pdf.cell(widths[2], 8, score_val, border=1, align='C', fill=True)
-        pdf.cell(widths[3], 8, texto_risco, border=1, align='C', fill=True)
-        pdf.cell(widths[4], 8, previsto_val, border=1, align='C', fill=True)
-        pdf.cell(widths[5], 8, str(row["Grupo CID"])[:25], border=1, align='L', fill=True)
-        pdf.cell(widths[6], 8, str(int(row['Total atestados'])), border=1, align='C', fill=True)
-        pdf.cell(widths[7], 8, str(int(row['Dias afastados'])), border=1, align='C', fill=True)
-        pdf.cell(widths[8], 8, str(int(row['Atestados (6m)'])), border=1, align='C', fill=True)
-        pdf.cell(widths[9], 8, str(int(row['Dias s/ atestado'])), border=1, align='C', fill=True)
-        pdf.cell(widths[10], 8, peso_val, border=1, align='C', fill=True)
+        # O SEGREDO DA REDUÇÃO: Altura (h) passou de 8 para 5
+        h_linha = 5 
+        
+        pdf.cell(widths[0], h_linha, str(index), border=1, align='C', fill=True)
+        pdf.cell(widths[1], h_linha, str(row["Empregado"]), border=1, align='C', fill=True)
+        pdf.cell(widths[2], h_linha, score_val, border=1, align='C', fill=True)
+        pdf.cell(widths[3], h_linha, texto_risco, border=1, align='C', fill=True)
+        pdf.cell(widths[4], h_linha, previsto_val, border=1, align='C', fill=True)
+        pdf.cell(widths[5], h_linha, str(row["Grupo CID"])[:30], border=1, align='L', fill=True)
+        pdf.cell(widths[6], h_linha, str(int(row['Total atestados'])), border=1, align='C', fill=True)
+        pdf.cell(widths[7], h_linha, str(int(row['Dias afastados'])), border=1, align='C', fill=True)
+        pdf.cell(widths[8], h_linha, str(int(row['Atestados (6m)'])), border=1, align='C', fill=True)
+        pdf.cell(widths[9], h_linha, str(int(row['Dias s/ atestado'])), border=1, align='C', fill=True)
+        pdf.cell(widths[10], h_linha, peso_val, border=1, align='C', fill=True)
         pdf.ln()
         
     return bytes(pdf.output())
-
+    
 # ── Login ─────────────────────────────────────────────────────────────────────
 if "logado" not in st.session_state:
     st.session_state.logado = False
