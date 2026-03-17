@@ -401,5 +401,4 @@ with col_btn:
 with col_info:
     st.caption(
         "PDF gerado em A4 paisagem com todos os empregados, colorido por nível de risco. "
-        "Requer `pip install weasyprint`."
     )
