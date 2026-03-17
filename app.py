@@ -356,7 +356,7 @@ with st.sidebar:
     try:
         pdf_bytes = gerar_pdf(ranking)
         st.download_button(
-            label="📄 Baixar Ranking em PDF",
+            label="📄 Baixar Score em PDF",
             data=pdf_bytes,
             file_name=f"ranking_absenteismo_{datetime.now().strftime('%Y%m%d')}.pdf",
             mime="application/pdf"
