@@ -328,10 +328,8 @@ from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, 
 from reportlab.lib.styles import getSampleStyleSheet
 
 def gerar_pdf_visual(df_ranking):
-    buffer = io.BytesIO()
-    doc = SimpleDocTemplate(buffer, pagesize=landscape(A4), rightMargin=20,leftMargin=20, topMargin=20,bottomMargin=20)
-    elements = []
-    styles = getSampleStyleSheet()
+    df_ranking = df_ranking.copy()
+    df_ranking["Previstos (90d)"] = df_ranking["Previstos (90d)"].apply(lambda x: f"{x:.2f}")
     
     # Título
     elements.append(Paragraph("Score de Risco de Absenteísmo — Próximos 90 dias", styles['Title']))
