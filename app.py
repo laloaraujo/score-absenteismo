@@ -116,7 +116,7 @@ df = df.dropna(subset=["DATA"])
 df = df.sort_values(["MAT", "DATA"])
 df["CID"] = df["CID"].astype(str).str.strip().str.upper()
 df[["grupo_cid", "peso_cid"]] = df["CID"].apply(lambda c: pd.Series(get_cid_info(c)))
-hoje = df["DATA"].max()
+hoje = pd.Timestamp(datetime.now().date())
 
 # ── Métricas principais ───────────────────────────────────────────────────────
 col1, col2, col3 = st.columns(3)
