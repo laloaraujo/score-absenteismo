@@ -328,7 +328,7 @@ from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, 
 from reportlab.lib.styles import getSampleStyleSheet
 
 def gerar_pdf_visual(df_ranking):
-    df_ranking = df_ranking.copy()
+    df_ranking = df_ranking.copy().sort_values("Empregado")
     df_ranking["Previstos (90d)"] = df_ranking["Previstos (90d)"].apply(lambda x: f"{x:.2f}")
     
     # Título
