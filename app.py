@@ -279,6 +279,7 @@ ranking = features[[
     "atestados_6m", "dias_desde_ultimo", "peso_cid_max"
 ]].copy()
 
+ranking["dias_afastados"] = ranking["dias_afastados"].fillna(0).astype(int)
 ranking = ranking.sort_values("score_risco", ascending=False).reset_index(drop=True)
 ranking.index = ranking.index + 1
 ranking.index.name = "Posição"
