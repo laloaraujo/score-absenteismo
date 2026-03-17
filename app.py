@@ -2,16 +2,15 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import glob
-import tempfile
 import os
 from datetime import datetime
 from xgboost import XGBRegressor
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import MinMaxScaler
 import warnings
-
 warnings.filterwarnings("ignore")
 
+# ── Login ─────────────────────────────────────────────────────────────────────
 if "logado" not in st.session_state:
     st.session_state.logado = False
 
@@ -54,7 +53,7 @@ st.title("Score de Risco de Absenteísmo em 90 Dias")
 
 # ── Sidebar ───────────────────────────────────────────────────────────────────
 with st.sidebar:
-    col1, col2, col3 = st.sidebar.columns([1, 2, 1])
+    col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
         if os.path.exists("lalo.png"):
             st.image("lalo.png", use_container_width=True)
@@ -100,7 +99,6 @@ def get_cid_info(cid):
 
 # ── Carregar CSVs ─────────────────────────────────────────────────────────────
 files = glob.glob("*.csv")
-
 if len(files) == 0:
     st.error("Nenhum CSV encontrado na pasta.")
     st.stop()
@@ -117,11 +115,7 @@ df["DATA"] = pd.to_datetime(df["DATA"], dayfirst=True, errors="coerce")
 df = df.dropna(subset=["DATA"])
 df = df.sort_values(["MAT", "DATA"])
 df["CID"] = df["CID"].astype(str).str.strip().str.upper()
-
-df[["grupo_cid", "peso_cid"]] = df["CID"].apply(
-    lambda c: pd.Series(get_cid_info(c))
-)
-
+df[["grupo_cid", "peso_cid"]] = df["CID"].apply(lambda c: pd.Series(get_cid_info(c)))
 hoje = df["DATA"].max()
 
 # ── Métricas principais ───────────────────────────────────────────────────────
@@ -133,7 +127,6 @@ col3.metric("Dias afastados", int(df["DIAS"].sum()))
 # ── Janela temporal ───────────────────────────────────────────────────────────
 JANELA_IDEAL = 90
 span_dias = (hoje - df["DATA"].min()).days
-
 if span_dias < JANELA_IDEAL * 2:
     JANELA_DIAS = max(7, int(span_dias * 0.35))
     st.warning(
@@ -145,12 +138,18 @@ else:
     JANELA_DIAS = JANELA_IDEAL
 
 data_corte = hoje - pd.Timedelta(days=JANELA_DIAS)
-historico  = df[df["DATA"] < data_corte].copy()
-futuro     = df[(df["DATA"] >= data_corte) & (df["DATA"] <= hoje)].copy()
 
-if historico.empty:
-    st.error("❌ Não há dados históricos suficientes para treinar o modelo.")
-    st.stop()
+# ── Histórico e futuro ─────────────────────────────────────────────────────────
+todos_empregados = pd.DataFrame(df["MAT"].unique(), columns=["MAT"])
+historico = df[df["DATA"] < data_corte].copy()
+historico = todos_empregados.merge(historico, on="MAT", how="left")
+historico["DIAS"] = historico["DIAS"].fillna(0)
+historico["CID"]  = historico["CID"].fillna("Z")
+historico["DATA"] = historico["DATA"].fillna(df["DATA"].min())
+historico["peso_cid"] = historico.apply(lambda row: get_cid_info(row["CID"])[1], axis=1)
+historico["grupo_cid"] = historico.apply(lambda row: get_cid_info(row["CID"])[0], axis=1)
+
+futuro = df[(df["DATA"] >= data_corte) & (df["DATA"] <= hoje)].copy()
 
 # ── Feature Engineering ───────────────────────────────────────────────────────
 def build_features(source: pd.DataFrame, ref_date: pd.Timestamp) -> pd.DataFrame:
@@ -168,7 +167,6 @@ def build_features(source: pd.DataFrame, ref_date: pd.Timestamp) -> pd.DataFrame
 
     peso_max_cid = source.groupby("MAT")["peso_cid"].max().reset_index(name="peso_cid_max")
 
-    source = source.copy()
     source["peso_x_dias"] = source["peso_cid"] * source["DIAS"]
     peso_pond = (
         source.groupby("MAT")
@@ -178,43 +176,70 @@ def build_features(source: pd.DataFrame, ref_date: pd.Timestamp) -> pd.DataFrame
     )
 
     diversidade_cid = source.groupby("MAT")["grupo_cid"].nunique().reset_index(name="diversidade_cid")
-
     source["cid_cronico"] = (source["peso_cid"] >= 3.0).astype(int)
     tem_cronico = source.groupby("MAT")["cid_cronico"].max().reset_index(name="tem_cid_cronico")
 
-    feat = freq.merge(dias,           on="MAT")
-    feat = feat.merge(ultimo,         on="MAT")
-    feat = feat.merge(primeiro,       on="MAT")
-    feat = feat.merge(freq_6m,        on="MAT", how="left")
-    feat = feat.merge(freq_3m,        on="MAT", how="left")
-    feat = feat.merge(dias_6m,        on="MAT", how="left")
-    feat = feat.merge(peso_max_cid,   on="MAT", how="left")
-    feat = feat.merge(peso_pond,      on="MAT", how="left")
-    feat = feat.merge(diversidade_cid,on="MAT", how="left")
-    feat = feat.merge(tem_cronico,    on="MAT", how="left")
-    feat = feat.fillna(0)
+    feat = freq.merge(dias, on="MAT", how="right")
+    feat = feat.merge(ultimo, on="MAT", how="right")
+    feat = feat.merge(primeiro, on="MAT", how="right")
+    feat = feat.merge(freq_6m, on="MAT", how="left")
+    feat = feat.merge(freq_3m, on="MAT", how="left")
+    feat = feat.merge(dias_6m, on="MAT", how="left")
+    feat = feat.merge(peso_max_cid, on="MAT", how="left")
+    feat = feat.merge(peso_pond, on="MAT", how="left")
+    feat = feat.merge(diversidade_cid, on="MAT", how="left")
+    feat = feat.merge(tem_cronico, on="MAT", how="left")
 
-    feat["dias_desde_ultimo"]   = (ref_date - feat["data_ultimo"]).dt.days
-    feat["meses_historico"]     = ((feat["data_ultimo"] - feat["data_primeiro"]).dt.days / 30).clip(lower=1)
-    feat["freq_mensal"]         = feat["total_atestados"] / feat["meses_historico"]
-    feat["media_dias_atestado"] = feat["dias_afastados"]  / feat["total_atestados"]
-    feat["tendencia_recente"]   = feat["atestados_6m"] / (feat["total_atestados"] + 1)
-    feat["score_recencia"]      = 1 / (feat["dias_desde_ultimo"] + 1)
+    # Garantir que todos os empregados apareçam
+    feat = todos_empregados.merge(feat, on="MAT", how="left").fillna({
+        "dias_desde_ultimo": (ref_date - df["DATA"].min()).days,
+        "total_atestados": 0,
+        "dias_afastados": 0,
+        "atestados_6m": 0,
+        "atestados_3m": 0,
+        "dias_afastados_6m": 0,
+        "freq_mensal": 0,
+        "media_dias_atestado": 0,
+        "tendencia_recente": 0,
+        "score_recencia": 0,
+        "peso_cid_max": 0,
+        "peso_cid_ponderado": 0,
+        "diversidade_cid": 0,
+        "tem_cid_cronico": 0,
+    })
+
+    feat["dias_desde_ultimo"] = (ref_date - feat["data_ultimo"]).dt.days.fillna((ref_date - df["DATA"].min()).days)
+    feat["meses_historico"]   = ((feat["data_ultimo"] - feat["data_primeiro"]).dt.days / 30).clip(lower=1).fillna(1)
+    feat["freq_mensal"]       = feat["total_atestados"] / feat["meses_historico"]
+    feat["media_dias_atestado"] = feat["dias_afastados"] / feat["total_atestados"].replace(0,1)
+    feat["tendencia_recente"] = feat["atestados_6m"] / (feat["total_atestados"] + 1)
+    feat["score_recencia"]    = 1 / (feat["dias_desde_ultimo"] + 1)
 
     return feat
 
 features = build_features(historico, data_corte)
 
+# ── Merge com target futuro ───────────────────────────────────────────────────
 target_real = (
     futuro.groupby("MAT")
     .agg(atestados_futuros=("MAT", "count"), dias_futuros=("DIAS", "sum"))
     .reset_index()
 )
+features = features.merge(target_real, on="MAT", how="left").fillna({
+    "atestados_futuros": 0,
+    "dias_futuros": 0
+})
 
-features = features.merge(target_real, on="MAT", how="left")
-features["atestados_futuros"] = features["atestados_futuros"].fillna(0)
-features["dias_futuros"]      = features["dias_futuros"].fillna(0)
+# ── Grupo CID principal
+grupo_predominante = (
+    historico.groupby("MAT")
+    .apply(lambda g: g.loc[g["peso_cid"].idxmax(), "grupo_cid"])
+    .reset_index(name="grupo_cid_principal")
+)
+features = features.merge(grupo_predominante, on="MAT", how="left")
+features["grupo_cid_principal"] = features["grupo_cid_principal"].fillna("Não informado")
 
+# ── Modelo XGBoost ───────────────────────────────────────────────────────────
 feature_cols = [
     "dias_desde_ultimo", "total_atestados", "dias_afastados",
     "atestados_6m", "atestados_3m", "dias_afastados_6m",
@@ -227,7 +252,6 @@ X = features[feature_cols]
 y = features["atestados_futuros"]
 
 X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
-
 model = XGBRegressor(
     n_estimators=300, max_depth=4, learning_rate=0.03,
     subsample=0.8, colsample_bytree=0.8, random_state=42,
@@ -235,11 +259,8 @@ model = XGBRegressor(
 model.fit(X_train, y_train)
 
 pred_raw = model.predict(X)
-
 scaler_final = MinMaxScaler(feature_range=(0, 100))
-features["score_risco"] = (
-    scaler_final.fit_transform(pred_raw.reshape(-1, 1)).flatten().round(1)
-)
+features["score_risco"] = scaler_final.fit_transform(pred_raw.reshape(-1,1)).flatten().round(1)
 features["atestados_previstos"] = pred_raw.clip(min=0).round(1)
 
 def classificar_risco(score):
@@ -249,18 +270,11 @@ def classificar_risco(score):
 
 features["nivel_risco"] = features["score_risco"].apply(classificar_risco)
 
-grupo_predominante = (
-    historico.groupby("MAT")
-    .apply(lambda g: g.loc[g["peso_cid"].idxmax(), "grupo_cid"])
-    .reset_index(name="grupo_cid_principal")
-)
-features = features.merge(grupo_predominante, on="MAT", how="left")
-
-# ── Montar ranking final ───────────────────────────────────────────────────────
+# ── Ranking final ─────────────────────────────────────────────────────────────
 ranking = features[[
     "MAT", "score_risco", "nivel_risco", "atestados_previstos",
     "grupo_cid_principal", "total_atestados", "dias_afastados",
-    "atestados_6m", "dias_desde_ultimo", "peso_cid_max",
+    "atestados_6m", "dias_desde_ultimo", "peso_cid_max"
 ]].copy()
 
 ranking = ranking.sort_values("score_risco", ascending=False).reset_index(drop=True)
@@ -268,21 +282,20 @@ ranking.index = ranking.index + 1
 ranking.index.name = "Posição"
 
 ranking = ranking.rename(columns={
-    "MAT":                 "Empregado",
-    "score_risco":         "Score",
-    "nivel_risco":         "Nível de risco",
+    "MAT": "Empregado",
+    "score_risco": "Score",
+    "nivel_risco": "Nível de risco",
     "atestados_previstos": "Previstos (90d)",
     "grupo_cid_principal": "Grupo CID",
-    "total_atestados":     "Total atestados",
-    "dias_afastados":      "Dias afastados",
-    "atestados_6m":        "Atestados (6m)",
-    "dias_desde_ultimo":   "Dias s/ atestado",
-    "peso_cid_max":        "Peso CID",
+    "total_atestados": "Total atestados",
+    "dias_afastados": "Dias afastados",
+    "atestados_6m": "Atestados (6m)",
+    "dias_desde_ultimo": "Dias s/ atestado",
+    "peso_cid_max": "Peso CID",
 })
 
 # ── Exibição ──────────────────────────────────────────────────────────────────
-st.subheader("Ranking de Absenteísmo — Previsão para os próximos 90 dias")
-
+st.subheader("Score de Absenteísmo — Previsão para os próximos 90 dias")
 st.info(
     f"🔬 **Metodologia:** features construídas com dados anteriores a "
     f"**{data_corte.strftime('%d/%m/%Y')}**. O modelo XGBoost prevê quantos "
@@ -296,10 +309,7 @@ col2.metric("🟡 Médio risco", (features["nivel_risco"] == "🟡 Médio").sum(
 col3.metric("🟢 Baixo risco", (features["nivel_risco"] == "🟢 Baixo").sum())
 
 st.divider()
-
-# Tabela sem scroll: altura calculada para mostrar todas as linhas
 altura_tabela = (len(ranking) + 1) * 35 + 10
-
 st.dataframe(
     ranking.style
         .background_gradient(subset=["Score"], cmap="RdYlGn_r")
@@ -307,85 +317,3 @@ st.dataframe(
     use_container_width=True,
     height=altura_tabela,
 )
-
-# ── Exportar PDF ──────────────────────────────────────────────────────────────
-st.divider()
-
-def gerar_pdf(df_ranking: pd.DataFrame) -> bytes | None:
-    try:
-        from weasyprint import HTML
-    except ImportError:
-        return None
-
-    gerado_em = datetime.now().strftime("%d/%m/%Y %H:%M")
-
-    def cor_linha(nivel):
-        if "Alto"  in nivel: return "#fff0f0"
-        if "Médio" in nivel: return "#fffbea"
-        return "#f0fff4"
-
-    def badge(nivel):
-        if "Alto"  in nivel:
-            return '<span style="background:#ef4444;color:#fff;padding:2px 8px;border-radius:4px;font-size:10px;font-weight:700;">Alto</span>'
-        if "Médio" in nivel:
-            return '<span style="background:#f59e0b;color:#fff;padding:2px 8px;border-radius:4px;font-size:10px;font-weight:700;">Médio</span>'
-        return '<span style="background:#22c55e;color:#fff;padding:2px 8px;border-radius:4px;font-size:10px;font-weight:700;">Baixo</span>'
-
-    linhas_html = ""
-    for pos, row in df_ranking.iterrows():
-        bg = cor_linha(row["Nível de risco"])
-        linhas_html += f"""
-        <tr style="background:{bg};">
-            <td style="text-align:center;">{pos}</td>
-            <td style="text-align:center;font-weight:600;">{row['Empregado']}</td>
-            <td style="text-align:center;font-weight:700;">{row['Score']:.1f}</td>
-            <td style="text-align:center;">{badge(row['Nível de risco'])}</td>
-            <td style="text-align:center;">{row['Previstos (90d)']:.1f}</td>
-            <td>{row['Grupo CID']}</td>
-            <td style="text-align:center;">{int(row['Total atestados'])}</td>
-            <td style="text-align:center;">{int(row['Dias afastados'])}</td>
-            <td style="text-align:center;">{int(row['Atestados (6m)'])}</td>
-            <td style="text-align:center;">{int(row['Dias s/ atestado'])}</td>
-            <td style="text-align:center;">{row['Peso CID']:.1f}</td>
-        </tr>"""
-
-    html = f"""<!DOCTYPE html>
-<html lang="pt-BR">
-<head>
-<meta charset="UTF-8">
-<style>
-    @page {{ size: A4 landscape; margin: 1.5cm; }}
-    body {{ font-family: Arial, sans-serif; font-size: 10px; color: #1e293b; }}
-    h1 {{ font-size: 15px; color: #1e3a5f; margin-bottom: 2px; }}
-    .sub {{ font-size: 9px; color: #64748b; margin-bottom: 14px; }}
-    table {{ width: 100%; border-collapse: collapse; }}
-    thead tr {{ background: #1e3a5f; color: white; }}
-    th {{ padding: 6px 8px; text-align: center; font-size: 9px; font-weight: 700; letter-spacing: 0.03em; }}
-    td {{ padding: 5px 8px; border-bottom: 1px solid #e2e8f0; font-size: 9px; }}
-    .footer {{ margin-top: 12px; font-size: 8px; color: #94a3b8; text-align: right; }}
-</style>
-</head>
-<body>
-    <h1>Score de Risco de Absenteísmo — Próximos {JANELA_DIAS} dias</h1>
-    <p class="sub">
-        Gerado em {gerado_em} &nbsp;|&nbsp;
-        Base de dados até {hoje.strftime('%d/%m/%Y')} &nbsp;|&nbsp;
-        Modelo: XGBoost &nbsp;|&nbsp;
-        Total de empregados: {len(df_ranking)}
-    </p>
-    <table>
-        <thead>
-            <tr>
-                <th>#</th><th>Empregado</th><th>Score</th><th>Nível</th>
-                <th>Previstos (90d)</th><th>Grupo CID</th>
-                <th>Total atestados</th><th>Dias afastados</th>
-                <th>Atestados (6m)</th><th>Dias s/ atestado</th><th>Peso CID</th>
-            </tr>
-        </thead>
-        <tbody>
-            {linhas_html}
-        </tbody>
-    </table>
-    <p class="footer">Jorge Eduardo de Araujo Oliveira — Score de Risco de Absenteísmo</p>
-</body>
-</html>"""
