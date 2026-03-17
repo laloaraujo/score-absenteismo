@@ -12,6 +12,54 @@ from datetime import datetime
 
 warnings.filterwarnings("ignore")
 
+def gerar_pdf(df_ranking):
+    pdf = FPDF(orientation='L', unit='mm', format='A4')
+    pdf.add_page()
+    pdf.set_font("Arial", "B", 16)
+    
+    pdf.cell(0, 10, "Relatorio de Score de Absenteismo - Previsao 90 Dias", ln=True, align='C')
+    pdf.ln(5)
+    
+    # Cabeçalho
+    pdf.set_font("Arial", "B", 8)
+    pdf.set_fill_color(30, 58, 95) 
+    pdf.set_text_color(255, 255, 255)
+    
+    cols = ["Pos", "Empregado", "Score", "Risco", "Previstos", "Grupo CID", "Total", "Dias", "6m", "S/ Ates.", "Peso"]
+    widths = [12, 25, 15, 25, 25, 45, 20, 20, 20, 30, 15] 
+    
+    for i, col_name in enumerate(cols):
+        pdf.cell(widths[i], 10, col_name, border=1, align='C', fill=True)
+    pdf.ln()
+    
+    # Linhas
+    pdf.set_font("Arial", "", 8)
+    pdf.set_text_color(0, 0, 0)
+    
+    for index, row in df_ranking.iterrows():
+        # Cores baseadas no nível de risco
+        if "Alto" in str(row["Nível de risco"]):
+            pdf.set_fill_color(255, 204, 204)
+        elif "Médio" in str(row["Nível de risco"]):
+            pdf.set_fill_color(255, 255, 204)
+        else:
+            pdf.set_fill_color(204, 255, 204)
+            
+        pdf.cell(widths[0], 8, str(index), border=1, align='C', fill=True)
+        pdf.cell(widths[1], 8, str(row["Empregado"]), border=1, align='C', fill=True)
+        pdf.cell(widths[2], 8, str(row["Score"]), border=1, align='C', fill=True)
+        pdf.cell(widths[3], 8, str(row["Nível de risco"]), border=1, align='C', fill=True)
+        pdf.cell(widths[4], 8, str(row["Previstos (90d)"]), border=1, align='C', fill=True)
+        pdf.cell(widths[5], 8, str(row["Grupo CID"]), border=1, align='C', fill=True)
+        pdf.cell(widths[6], 8, str(row["Total atestados"]), border=1, align='C', fill=True)
+        pdf.cell(widths[7], 8, str(row["Dias afastados"]), border=1, align='C', fill=True)
+        pdf.cell(widths[8], 8, str(row["Atestados (6m)"]), border=1, align='C', fill=True)
+        pdf.cell(widths[9], 8, str(row["Dias s/ atestado"]), border=1, align='C', fill=True)
+        pdf.cell(widths[10], 8, str(row["Peso CID"]), border=1, align='C', fill=True)
+        pdf.ln()
+        
+    return pdf.output(dest='S')
+
 # ── Login ─────────────────────────────────────────────────────────────────────
 if "logado" not in st.session_state:
     st.session_state.logado = False
